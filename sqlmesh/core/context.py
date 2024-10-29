@@ -591,6 +591,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         execution_time: t.Optional[TimeLike] = None,
         skip_janitor: bool = False,
         ignore_cron: bool = False,
+        select_models: t.Optional[t.Collection[str]] = None,
     ) -> bool:
         """Run the entire dag through the scheduler.
 
@@ -601,6 +602,8 @@ class GenericContext(BaseContext, t.Generic[C]):
             execution_time: The date/time time reference to use for execution time. Defaults to now.
             skip_janitor: Whether to skip the janitor task.
             ignore_cron: Whether to ignore the model's cron schedule and run all available missing intervals.
+            select_models: A list of model selection expressions to filter models that should run. Note that
+                upstream dependencies of selected models will also be evaluated.
 
         Returns:
             True if the run was successful, False otherwise.
@@ -614,13 +617,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             engine_type=self.snapshot_evaluator.adapter.dialect,
             state_sync_type=self.state_sync.state_type(),
         )
-
-        if not self._loaded:
-            # Signals and materializations should be loaded to run correctly.
-            for context_loader in self._loaders.values():
-                with sys_path(*context_loader.configs):
-                    context_loader.loader.load_signals(self)
-                    context_loader.loader.load_materializations(self)
+        self._load_materializations_and_signals()
 
         success = False
         try:
@@ -631,6 +628,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                 execution_time=execution_time,
                 skip_janitor=skip_janitor,
                 ignore_cron=ignore_cron,
+                select_models=select_models,
             )
         except Exception as e:
             self.notification_target_manager.notify(
@@ -848,7 +846,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             return next(pandas_to_sql(t.cast(pd.DataFrame, df), model.columns_to_types))
 
         snapshots = self.snapshots
-        deployability_index = DeployabilityIndex.create(snapshots.values())
+        deployability_index = DeployabilityIndex.create(snapshots.values(), start=start)
 
         return model.render_query_or_raise(
             start=start,
@@ -1712,6 +1710,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         Please contact your SQLMesh administrator before doing this.
         """
         self.notification_target_manager.notify(NotificationEvent.MIGRATION_START)
+        self._load_materializations_and_signals()
         try:
             self._new_state_sync().migrate(
                 default_catalog=self.default_catalog,
@@ -1800,6 +1799,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         execution_time: t.Optional[TimeLike],
         skip_janitor: bool,
         ignore_cron: bool,
+        select_models: t.Optional[t.Collection[str]],
     ) -> bool:
         if not skip_janitor and environment.lower() == c.PROD:
             self._run_janitor()
@@ -1831,6 +1831,19 @@ class GenericContext(BaseContext, t.Generic[C]):
                 "See https://sqlmesh.readthedocs.io/en/stable/reference/configuration/#run to adjust the timeout settings."
             )
 
+        scheduler = self.scheduler(environment=environment)
+        snapshots = scheduler.snapshots
+
+        if select_models is not None:
+            models: UniqueKeyDict[str, Model] = UniqueKeyDict(
+                "models", **{s.name: s.model for s in snapshots.values() if s.is_model}
+            )
+            dag: DAG[str] = DAG()
+            for fqn, model in models.items():
+                dag.add(fqn, model.depends_on)
+            model_selector = self._new_selector(models=models, dag=dag)
+            select_models = set(dag.subdag(*model_selector.expand_model_selections(select_models)))
+
         done = False
         while not done:
             plan_id_at_start = _block_until_finalized()
@@ -1845,13 +1858,14 @@ class GenericContext(BaseContext, t.Generic[C]):
                 )
 
             try:
-                success = self.scheduler(environment=environment).run(
+                success = scheduler.run(
                     environment,
                     start=start,
                     end=end,
                     execution_time=execution_time,
                     ignore_cron=ignore_cron,
                     circuit_breaker=_has_environment_changed,
+                    selected_snapshots=select_models,
                 )
                 done = True
             except CircuitBreakerError:
@@ -2056,12 +2070,15 @@ class GenericContext(BaseContext, t.Generic[C]):
     def _new_state_sync(self) -> StateSync:
         return self._provided_state_sync or self._scheduler.create_state_sync(self)
 
-    def _new_selector(self) -> Selector:
+    def _new_selector(
+        self, models: t.Optional[UniqueKeyDict[str, Model]] = None, dag: t.Optional[DAG[str]] = None
+    ) -> Selector:
         return Selector(
             self.state_reader,
-            models=self._models,
+            models=models or self._models,
             audits=self._audits,
             context_path=self.path,
+            dag=dag,
             default_catalog=self.default_catalog,
             dialect=self.default_dialect,
         )
@@ -2081,6 +2098,13 @@ class GenericContext(BaseContext, t.Generic[C]):
         self.notification_target_manager = NotificationTargetManager(
             event_notifications, user_notification_targets, username=self.config.username
         )
+
+    def _load_materializations_and_signals(self) -> None:
+        if not self._loaded:
+            for context_loader in self._loaders.values():
+                with sys_path(*context_loader.configs):
+                    context_loader.loader.load_signals(self)
+                    context_loader.loader.load_materializations(self)
 
 
 class Context(GenericContext[Config]):

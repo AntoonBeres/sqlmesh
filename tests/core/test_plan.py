@@ -41,6 +41,7 @@ from sqlmesh.utils.date import (
     yesterday_ds,
 )
 from sqlmesh.utils.errors import PlanError
+from sqlmesh.utils.metaprogramming import Executable
 
 
 def test_forward_only_plan_sets_version(make_snapshot, mocker: MockerFixture):
@@ -701,7 +702,6 @@ def test_missing_intervals_lookback(make_snapshot, mocker: MockerFixture):
         environment_naming_info=EnvironmentNamingInfo(),
         directly_modified={snapshot_a.snapshot_id},
         indirectly_modified={},
-        ignored=set(),
         deployability_index=DeployabilityIndex.all_deployable(),
         restatements={},
         end_bounded=False,
@@ -2138,14 +2138,15 @@ def test_dev_plan_depends_past(make_snapshot, mocker: MockerFixture):
     dev_plan_start_ahead_of_model = PlanBuilder(
         context_diff, schema_differ, start="2023-01-02", end="2023-01-10", is_dev=True
     ).build()
-    assert len(dev_plan_start_ahead_of_model.new_snapshots) == 1
-    assert [x.name for x in dev_plan_start_ahead_of_model.new_snapshots] == ['"b"']
-    assert len(dev_plan_start_ahead_of_model.ignored) == 2
-    assert sorted(list(dev_plan_start_ahead_of_model.ignored)) == [
+    assert len(dev_plan_start_ahead_of_model.new_snapshots) == 3
+    assert not dev_plan_start_ahead_of_model.deployability_index.is_deployable(snapshot)
+    assert not dev_plan_start_ahead_of_model.deployability_index.is_deployable(snapshot_child)
+    assert dev_plan_start_ahead_of_model.deployability_index.is_deployable(unrelated_snapshot)
+    assert dev_plan_start_ahead_of_model.directly_modified == {
         snapshot.snapshot_id,
         snapshot_child.snapshot_id,
-    ]
-    assert dev_plan_start_ahead_of_model.directly_modified == {unrelated_snapshot.snapshot_id}
+        unrelated_snapshot.snapshot_id,
+    }
     assert dev_plan_start_ahead_of_model.indirectly_modified == {}
 
 
@@ -2235,15 +2236,6 @@ def test_dev_plan_depends_past_non_deployable(make_snapshot, mocker: MockerFixtu
         '"b"',
     ]
 
-    # There should be no ignored snapshots because all changes are non-deployable.
-    dev_plan_start_ahead_of_model = new_builder(start="2023-01-02", end="2023-01-10").build()
-    assert sorted([x.name for x in dev_plan_start_ahead_of_model.new_snapshots]) == [
-        '"a"',
-        '"a_child"',
-        '"b"',
-    ]
-    assert not dev_plan_start_ahead_of_model.ignored
-
 
 def test_restatement_intervals_after_updating_start(sushi_context: Context):
     plan = sushi_context.plan(no_prompts=True, restate_models=["sushi.waiter_revenue_by_day"])
@@ -2294,11 +2286,6 @@ def test_models_selected_for_backfill(make_snapshot, mocker: MockerFixture):
     )
 
     schema_differ = DuckDBEngineAdapter.SCHEMA_DIFFER
-    with pytest.raises(
-        PlanError,
-        match="Selecting models to backfill is only supported for development environments",
-    ):
-        PlanBuilder(context_diff, schema_differ, backfill_models={'"a"'}).build()
 
     plan = PlanBuilder(context_diff, schema_differ).build()
     assert plan.is_selected_for_backfill('"a"')
@@ -2562,3 +2549,84 @@ def test_interval_end_per_model(make_snapshot):
         is_dev=True,
     )
     assert plan_builder.build().interval_end_per_model is None
+
+
+def test_plan_requirements():
+    context = Context(paths="examples/sushi")
+    model = context.get_model("sushi.items")
+    model.python_env["ruamel"] = Executable(payload="import ruamel", kind="import")
+    model.python_env["Image"] = Executable(
+        payload="from ipywidgets.widgets.widget_media import Image", kind="import"
+    )
+
+    plan = context.plan(
+        "dev", no_prompts=True, skip_tests=True, skip_backfill=True
+    ).environment.requirements
+    assert set(plan) == {"ipywidgets", "numpy", "pandas", "ruamel.yaml", "ruamel.yaml.clib"}
+
+
+def test_unaligned_start_model_with_forward_only_preview(make_snapshot):
+    snapshot_a = make_snapshot(
+        SqlModel(
+            name="a",
+            query=parse_one("select 1, ds"),
+            kind=dict(
+                name=ModelKindName.INCREMENTAL_BY_TIME_RANGE, forward_only=True, time_column="ds"
+            ),
+        )
+    )
+    snapshot_a.categorize_as(SnapshotChangeCategory.BREAKING)
+
+    new_snapshot_a = make_snapshot(
+        SqlModel(
+            name="a",
+            query=parse_one("select 2, ds"),
+            kind=dict(
+                name=ModelKindName.INCREMENTAL_BY_TIME_RANGE, forward_only=True, time_column="ds"
+            ),
+        )
+    )
+    new_snapshot_a.previous_versions = snapshot_a.all_versions
+    new_snapshot_a.unpaused_ts = 1
+
+    snapshot_b = make_snapshot(
+        SqlModel(
+            name="b",
+            query=parse_one("select 1 AS key"),
+            kind=dict(name=ModelKindName.INCREMENTAL_BY_UNIQUE_KEY, unique_key="key"),
+            start="2024-01-01",
+            depends_on={"a"},
+        ),
+        nodes={new_snapshot_a.name: new_snapshot_a.model},
+    )
+
+    context_diff = ContextDiff(
+        environment="test_environment",
+        is_new_environment=True,
+        is_unfinalized_environment=False,
+        normalize_environment_name=True,
+        create_from="prod",
+        added={snapshot_b.snapshot_id},
+        removed_snapshots={},
+        snapshots={new_snapshot_a.snapshot_id: new_snapshot_a, snapshot_b.snapshot_id: snapshot_b},
+        new_snapshots={
+            new_snapshot_a.snapshot_id: new_snapshot_a,
+            snapshot_b.snapshot_id: snapshot_b,
+        },
+        modified_snapshots={snapshot_a.name: (new_snapshot_a, snapshot_a)},
+        previous_plan_id=None,
+        previously_promoted_snapshot_ids=set(),
+        previous_finalized_snapshots=None,
+    )
+
+    plan_builder = PlanBuilder(
+        context_diff,
+        DuckDBEngineAdapter.SCHEMA_DIFFER,
+        enable_preview=True,
+        is_dev=True,
+    )
+    plan = plan_builder.build()
+
+    assert set(plan.restatements) == {new_snapshot_a.snapshot_id, snapshot_b.snapshot_id}
+    assert not plan.deployability_index.is_deployable(new_snapshot_a)
+    assert not plan.deployability_index.is_deployable(snapshot_b)
