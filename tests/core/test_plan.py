@@ -695,6 +695,7 @@ def test_missing_intervals_lookback(make_snapshot, mocker: MockerFixture):
         execution_time="2022-01-05 12:00",
         is_dev=True,
         skip_backfill=False,
+        empty_backfill=False,
         no_gaps=False,
         forward_only=False,
         allow_destructive_models=set(),
@@ -745,14 +746,25 @@ def test_restate_models(sushi_context_pre_scheduling: Context):
         ),
     }
     assert plan.requires_backfill
+    assert plan.models_to_backfill == {
+        '"memory"."sushi"."customer_revenue_by_day"',
+        '"memory"."sushi"."customer_revenue_lifetime"',
+        '"memory"."sushi"."items"',
+        '"memory"."sushi"."order_items"',
+        '"memory"."sushi"."orders"',
+        '"memory"."sushi"."top_waiters"',
+        '"memory"."sushi"."waiter_revenue_by_day"',
+    }
 
     plan = sushi_context_pre_scheduling.plan(restate_models=["unknown_model"], no_prompts=True)
     assert not plan.has_changes
     assert not plan.restatements
+    assert plan.models_to_backfill is None
 
     plan = sushi_context_pre_scheduling.plan(restate_models=["tag:unknown_tag"], no_prompts=True)
     assert not plan.has_changes
     assert not plan.restatements
+    assert plan.models_to_backfill is None
 
 
 @pytest.mark.slow
@@ -808,6 +820,13 @@ def test_restate_models_with_existing_missing_intervals(sushi_context: Context):
         ),
     ]
     assert plan.requires_backfill
+    assert plan.models_to_backfill == {
+        top_waiters_snapshot_id.name,
+        waiter_revenue_by_day_snapshot_id.name,
+        '"memory"."sushi"."items"',
+        '"memory"."sushi"."order_items"',
+        '"memory"."sushi"."orders"',
+    }
 
 
 def test_restate_symbolic_model(make_snapshot, mocker: MockerFixture):
@@ -2551,7 +2570,7 @@ def test_interval_end_per_model(make_snapshot):
     assert plan_builder.build().interval_end_per_model is None
 
 
-def test_plan_requirements():
+def test_plan_requirements(mocker):
     context = Context(paths="examples/sushi")
     model = context.get_model("sushi.items")
     model.python_env["ruamel"] = Executable(payload="import ruamel", kind="import")
@@ -2559,10 +2578,19 @@ def test_plan_requirements():
         payload="from ipywidgets.widgets.widget_media import Image", kind="import"
     )
 
-    plan = context.plan(
-        "dev", no_prompts=True, skip_tests=True, skip_backfill=True
-    ).environment.requirements
-    assert set(plan) == {"ipywidgets", "numpy", "pandas", "ruamel.yaml", "ruamel.yaml.clib"}
+    environment = context.plan(
+        "dev", no_prompts=True, skip_tests=True, skip_backfill=True, auto_apply=True
+    ).environment
+    requirements = {"ipywidgets", "numpy", "pandas", "ruamel.yaml", "ruamel.yaml.clib"}
+    assert environment.requirements["pandas"] == "2.2.2"
+    assert set(environment.requirements) == requirements
+
+    mocker.patch(
+        "sqlmesh.core.context_diff.ContextDiff.requirements", {"numpy": "2.1.2", "pandas": "2.2.1"}
+    )
+    diff = context.plan("dev", no_prompts=True, skip_tests=True, skip_backfill=True).context_diff
+    assert set(diff.previous_requirements) == requirements
+    assert set(diff.requirements) == {"numpy", "pandas"}
 
 
 def test_unaligned_start_model_with_forward_only_preview(make_snapshot):

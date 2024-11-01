@@ -295,6 +295,10 @@ Options:
                                   matching models in the target environment.
   --skip-backfill, --dry-run      Skip the backfill step and only create a
                                   virtual update for the plan.
+  --empty-backfill                Produce empty backfill. Like --skip-backfill
+                                  no models will be backfilled, unlike --skip-
+                                  backfill missing intervals will be recorded
+                                  as if they were backfilled.
   --forward-only                  Create a plan for forward-only changes.
   --allow-destructive-model TEXT  Allow destructive forward-only changes to
                                   models whose names match the expression.
@@ -398,16 +402,19 @@ Usage: sqlmesh run [OPTIONS] [ENVIRONMENT]
   Evaluate missing intervals for the target environment.
 
 Options:
-  -s, --start TEXT     The start datetime of the interval for which this
-                       command will be applied.
-  -e, --end TEXT       The end datetime of the interval for which this command
-                       will be applied.
-  --skip-janitor       Skip the janitor task.
-  --ignore-cron        Run for all missing intervals, ignoring individual cron
-                       schedules.
-  --select-model TEXT  Select specific models to run. Note: this always
-                       includes upstream dependencies.
-  --help               Show this message and exit.
+  -s, --start TEXT              The start datetime of the interval for which
+                                this command will be applied.
+  -e, --end TEXT                The end datetime of the interval for which
+                                this command will be applied.
+  --skip-janitor                Skip the janitor task.
+  --ignore-cron                 Run for all missing intervals, ignoring
+                                individual cron schedules.
+  --select-model TEXT           Select specific models to run. Note: this
+                                always includes upstream dependencies.
+  --exit-on-env-update INTEGER  If set, the command will exit with the
+                                specified code if the run is interrupted by an
+                                update to the target environment.
+  --help                        Show this message and exit.
 ```
 
 ## table_diff

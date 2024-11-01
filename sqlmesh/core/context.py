@@ -36,6 +36,7 @@ from __future__ import annotations
 import abc
 import collections
 import logging
+import sys
 import time
 import traceback
 import typing as t
@@ -327,6 +328,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         self._macros: UniqueKeyDict[str, ExecutableOrMacro] = UniqueKeyDict("macros")
         self._metrics: UniqueKeyDict[str, Metric] = UniqueKeyDict("metrics")
         self._jinja_macros = JinjaMacroRegistry()
+        self._requirements: t.Dict[str, str] = {}
         self._default_catalog: t.Optional[str] = None
         self._loaded: bool = False
 
@@ -533,7 +535,10 @@ class GenericContext(BaseContext, t.Generic[C]):
         load_start_ts = time.perf_counter()
 
         projects = []
+        self._requirements.clear()
         for context_loader in self._loaders.values():
+            for path in context_loader.configs:
+                self._load_requirements(path)
             with sys_path(*context_loader.configs):
                 projects.append(context_loader.loader.load(self, update_schemas))
 
@@ -592,6 +597,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         skip_janitor: bool = False,
         ignore_cron: bool = False,
         select_models: t.Optional[t.Collection[str]] = None,
+        exit_on_env_update: t.Optional[int] = None,
     ) -> bool:
         """Run the entire dag through the scheduler.
 
@@ -604,6 +610,8 @@ class GenericContext(BaseContext, t.Generic[C]):
             ignore_cron: Whether to ignore the model's cron schedule and run all available missing intervals.
             select_models: A list of model selection expressions to filter models that should run. Note that
                 upstream dependencies of selected models will also be evaluated.
+            exit_on_env_update: If set, exits with the provided code if the run is interrupted by an update
+                to the target environment.
 
         Returns:
             True if the run was successful, False otherwise.
@@ -620,6 +628,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         self._load_materializations_and_signals()
 
         success = False
+        interrupted = False
         try:
             success = self._run(
                 environment=environment,
@@ -629,16 +638,21 @@ class GenericContext(BaseContext, t.Generic[C]):
                 skip_janitor=skip_janitor,
                 ignore_cron=ignore_cron,
                 select_models=select_models,
+                exit_on_env_update=exit_on_env_update is not None,
             )
+        except CircuitBreakerError:
+            interrupted = True
         except Exception as e:
             self.notification_target_manager.notify(
                 NotificationEvent.RUN_FAILURE, traceback.format_exc()
             )
             logger.error(f"Run Failure: {traceback.format_exc()}")
-            analytics.collector.on_run_end(run_id=analytics_run_id, succeeded=False, error=e)
+            analytics.collector.on_run_end(
+                run_id=analytics_run_id, succeeded=False, interrupted=False, error=e
+            )
             raise e
 
-        if success:
+        if success or interrupted:
             self.notification_target_manager.notify(
                 NotificationEvent.RUN_END, environment=environment
             )
@@ -648,7 +662,12 @@ class GenericContext(BaseContext, t.Generic[C]):
                 NotificationEvent.RUN_FAILURE, "See console logs for details."
             )
 
-        analytics.collector.on_run_end(run_id=analytics_run_id, succeeded=success)
+        analytics.collector.on_run_end(
+            run_id=analytics_run_id, succeeded=success, interrupted=interrupted
+        )
+
+        if interrupted and exit_on_env_update is not None:
+            sys.exit(exit_on_env_update)
 
         return success
 
@@ -963,6 +982,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         restate_models: t.Optional[t.Iterable[str]] = None,
         no_gaps: bool = False,
         skip_backfill: bool = False,
+        empty_backfill: bool = False,
         forward_only: t.Optional[bool] = None,
         allow_destructive_models: t.Optional[t.Collection[str]] = None,
         no_prompts: t.Optional[bool] = None,
@@ -1000,6 +1020,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                 part of the target environment have no data gaps when compared against previous
                 snapshots for same models.
             skip_backfill: Whether to skip the backfill step. Default: False.
+            empty_backfill: Like skip_backfill, but also records processed intervals.
             forward_only: Whether the purpose of the plan is to make forward only changes.
             allow_destructive_models: Models whose forward-only changes are allowed to be destructive.
             no_prompts: Whether to disable interactive prompts for the backfill time range. Please note that
@@ -1032,6 +1053,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             restate_models=restate_models,
             no_gaps=no_gaps,
             skip_backfill=skip_backfill,
+            empty_backfill=empty_backfill,
             forward_only=forward_only,
             allow_destructive_models=allow_destructive_models,
             no_auto_categorization=no_auto_categorization,
@@ -1067,6 +1089,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         restate_models: t.Optional[t.Iterable[str]] = None,
         no_gaps: bool = False,
         skip_backfill: bool = False,
+        empty_backfill: bool = False,
         forward_only: t.Optional[bool] = None,
         allow_destructive_models: t.Optional[t.Collection[str]] = None,
         no_auto_categorization: t.Optional[bool] = None,
@@ -1098,6 +1121,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                 part of the target environment have no data gaps when compared against previous
                 snapshots for same models.
             skip_backfill: Whether to skip the backfill step. Default: False.
+            empty_backfill: Like skip_backfill, but also records processed intervals.
             forward_only: Whether the purpose of the plan is to make forward only changes.
             allow_destructive_models: Models whose forward-only changes are allowed to be destructive.
             no_auto_categorization: Indicates whether to disable automatic categorization of model
@@ -1231,6 +1255,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             backfill_models=backfill_models,
             no_gaps=no_gaps,
             skip_backfill=skip_backfill,
+            empty_backfill=empty_backfill,
             is_dev=is_dev,
             forward_only=(
                 forward_only if forward_only is not None else self.config.plan.forward_only
@@ -1800,6 +1825,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         skip_janitor: bool,
         ignore_cron: bool,
         select_models: t.Optional[t.Collection[str]],
+        exit_on_env_update: bool,
     ) -> bool:
         if not skip_janitor and environment.lower() == c.PROD:
             self._run_janitor()
@@ -1873,6 +1899,8 @@ class GenericContext(BaseContext, t.Generic[C]):
                     "Environment '%s' has been modified while running. Restarting the run...",
                     environment,
                 )
+                if exit_on_env_update:
+                    raise
 
         return success
 
@@ -2043,6 +2071,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             snapshots=snapshots or self.snapshots,
             create_from=create_from or c.PROD,
             state_reader=self.state_reader,
+            requirements=self._requirements,
             ensure_finalized_snapshots=ensure_finalized_snapshots,
         )
 
@@ -2105,6 +2134,24 @@ class GenericContext(BaseContext, t.Generic[C]):
                 with sys_path(*context_loader.configs):
                     context_loader.loader.load_signals(self)
                     context_loader.loader.load_materializations(self)
+
+    def _load_requirements(self, path: Path) -> None:
+        path = path / c.REQUIREMENTS
+        if path.is_file():
+            with open(path, "r", encoding="utf-8") as file:
+                for line in file:
+                    args = [k.strip() for k in line.split("==")]
+                    if len(args) != 2:
+                        raise SQLMeshError(
+                            f"Invalid lock file entry '{line.strip()}'. Only 'dep==ver' is supported"
+                        )
+                    dep, ver = args
+                    other_ver = self._requirements.get(dep, ver)
+                    if ver != other_ver:
+                        raise SQLMeshError(
+                            f"Conflicting requirement {dep}: {ver} != {other_ver}. Fix your {c.REQUIREMENTS} file."
+                        )
+                    self._requirements[dep] = ver
 
 
 class Context(GenericContext[Config]):

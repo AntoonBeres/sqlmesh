@@ -338,6 +338,11 @@ class SQLMeshMagics(Magics):
         help="Skip the backfill step and only create a virtual update for the plan.",
     )
     @argument(
+        "--empty-backfill",
+        action="store_true",
+        help="Produce empty backfill. Like --skip-backfill no models will be backfilled, unlike --skip-backfill missing intervals will be recorded as if they were backfilled.",
+    )
+    @argument(
         "--forward-only",
         action="store_true",
         help="Create a plan for forward-only changes.",
@@ -418,6 +423,7 @@ class SQLMeshMagics(Magics):
             backfill_models=args.backfill_model,
             no_gaps=args.no_gaps,
             skip_backfill=args.skip_backfill,
+            empty_backfill=args.empty_backfill,
             forward_only=args.forward_only,
             no_prompts=args.no_prompts,
             auto_apply=args.auto_apply,
@@ -451,6 +457,11 @@ class SQLMeshMagics(Magics):
         nargs="*",
         help="Select specific models to run. Note: this always includes upstream dependencies.",
     )
+    @argument(
+        "--exit-on-env-update",
+        type=int,
+        help="If set, the command will exit with the specified code if the run is interrupted by an update to the target environment.",
+    )
     @line_magic
     @pass_sqlmesh_context
     def run_dag(self, context: Context, line: str) -> None:
@@ -464,6 +475,7 @@ class SQLMeshMagics(Magics):
             skip_janitor=args.skip_janitor,
             ignore_cron=args.ignore_cron,
             select_models=args.select_model,
+            exit_on_env_update=args.exit_on_env_update,
         )
         if not success:
             raise SQLMeshError("Error Running DAG. Check logs for details.")

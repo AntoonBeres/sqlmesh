@@ -334,6 +334,11 @@ def diff(ctx: click.Context, environment: t.Optional[str] = None) -> None:
     help="Skip the backfill step and only create a virtual update for the plan.",
 )
 @click.option(
+    "--empty-backfill",
+    is_flag=True,
+    help="Produce empty backfill. Like --skip-backfill no models will be backfilled, unlike --skip-backfill missing intervals will be recorded as if they were backfilled.",
+)
+@click.option(
     "--forward-only",
     is_flag=True,
     help="Create a plan for forward-only changes.",
@@ -443,6 +448,11 @@ def plan(
     type=str,
     multiple=True,
     help="Select specific models to run. Note: this always includes upstream dependencies.",
+)
+@click.option(
+    "--exit-on-env-update",
+    type=int,
+    help="If set, the command will exit with the specified code if the run is interrupted by an update to the target environment.",
 )
 @click.pass_context
 @error_handler

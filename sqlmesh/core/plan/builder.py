@@ -50,6 +50,7 @@ class PlanBuilder:
             part of the target environment have no data gaps when compared against previous
             snapshots for same nodes.
         skip_backfill: Whether to skip the backfill step.
+        empty_backfill: Like skip_backfill, but also records processed intervals.
         is_dev: Whether this plan is for development purposes.
         forward_only: Whether the purpose of the plan is to make forward only changes.
         allow_destructive_models: A list of fully qualified model names whose forward-only changes are allowed to be destructive.
@@ -83,6 +84,7 @@ class PlanBuilder:
         backfill_models: t.Optional[t.Iterable[str]] = None,
         no_gaps: bool = False,
         skip_backfill: bool = False,
+        empty_backfill: bool = False,
         is_dev: bool = False,
         forward_only: bool = False,
         allow_destructive_models: t.Optional[t.Iterable[str]] = None,
@@ -104,6 +106,7 @@ class PlanBuilder:
         self._context_diff = context_diff
         self._no_gaps = no_gaps
         self._skip_backfill = skip_backfill
+        self._empty_backfill = empty_backfill
         self._is_dev = is_dev
         self._forward_only = forward_only
         self._allow_destructive_models = set(
@@ -233,10 +236,10 @@ class PlanBuilder:
             else DeployabilityIndex.all_deployable()
         )
 
-        models_to_backfill = self._build_models_to_backfill(dag)
         restatements = self._build_restatements(
             dag, earliest_interval_start(self._context_diff.snapshots.values())
         )
+        models_to_backfill = self._build_models_to_backfill(dag, restatements)
 
         interval_end_per_model = self._interval_end_per_model
         if interval_end_per_model and self.override_end:
@@ -251,6 +254,7 @@ class PlanBuilder:
             provided_end=self._end,
             is_dev=self._is_dev,
             skip_backfill=self._skip_backfill,
+            empty_backfill=self._empty_backfill,
             no_gaps=self._no_gaps,
             forward_only=self._forward_only,
             allow_destructive_models=t.cast(t.Set, self._allow_destructive_models),
@@ -393,15 +397,25 @@ class PlanBuilder:
             indirectly_modified,
         )
 
-    def _build_models_to_backfill(self, dag: DAG[SnapshotId]) -> t.Optional[t.Set[str]]:
-        if self._backfill_models is None:
+    def _build_models_to_backfill(
+        self, dag: DAG[SnapshotId], restatements: t.Collection[SnapshotId]
+    ) -> t.Optional[t.Set[str]]:
+        backfill_models = (
+            self._backfill_models
+            if self._backfill_models is not None
+            else [r.name for r in restatements]
+            # Only backfill models explicitly marked for restatement.
+            if self._restate_models
+            else None
+        )
+        if backfill_models is None:
             return None
         return {
             self._context_diff.snapshots[s_id].name
             for s_id in dag.subdag(
                 *[
                     self._model_fqn_to_snapshot[m].snapshot_id
-                    for m in self._backfill_models
+                    for m in backfill_models
                     if m in self._model_fqn_to_snapshot
                 ]
             ).sorted
