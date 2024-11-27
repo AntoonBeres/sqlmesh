@@ -462,6 +462,11 @@ class SQLMeshMagics(Magics):
         type=int,
         help="If set, the command will exit with the specified code if the run is interrupted by an update to the target environment.",
     )
+    @argument(
+        "--no-auto-upstream",
+        action="store_true",
+        help="Do not automatically include upstream models. Only applicable when --select-model is used. Note: this may result in missing / invalid data for the selected models.",
+    )
     @line_magic
     @pass_sqlmesh_context
     def run_dag(self, context: Context, line: str) -> None:
@@ -476,6 +481,7 @@ class SQLMeshMagics(Magics):
             ignore_cron=args.ignore_cron,
             select_models=args.select_model,
             exit_on_env_update=args.exit_on_env_update,
+            no_auto_upstream=args.no_auto_upstream,
         )
         if not success:
             raise SQLMeshError("Error Running DAG. Check logs for details.")
@@ -960,12 +966,13 @@ class SQLMeshMagics(Magics):
         help="Skip the connection test.",
         default=False,
     )
+    @argument("--verbose", "-v", action="store_true", help="Verbose output.")
     @line_magic
     @pass_sqlmesh_context
     def info(self, context: Context, line: str) -> None:
         """Display SQLMesh project information."""
         args = parse_argstring(self.info, line)
-        context.print_info(skip_connection=args.skip_connection)
+        context.print_info(skip_connection=args.skip_connection, verbose=args.verbose)
 
     @magic_arguments()
     @line_magic

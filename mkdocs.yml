@@ -59,6 +59,10 @@ nav:
       - concepts/architecture/snapshots.md
       - concepts/architecture/serialization.md
     - concepts/glossary.md
+  - Examples:
+    - examples/overview.md
+    - Walkthroughs:
+      - examples/incremental_time_full_walkthrough.md
   - Integrations:
     - "Overview": integrations/overview.md
     - Tools:

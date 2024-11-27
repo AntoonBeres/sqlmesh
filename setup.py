@@ -47,7 +47,7 @@ setup(
         "requests",
         "rich[jupyter]",
         "ruamel.yaml",
-        "sqlglot[rs]~=25.30.0",
+        "sqlglot[rs]~=25.31.4",
         "tenacity",
     ],
     extras_require={
@@ -75,7 +75,7 @@ setup(
             "google-auth",
             "google-cloud-bigquery",
             "google-cloud-bigquery-storage",
-            "mypy~=1.10.0",
+            "mypy~=1.13.0",
             "pandas-stubs",
             "pre-commit",
             "psycopg2-binary",
@@ -89,7 +89,7 @@ setup(
             "pytest-retry; python_version>='3.9'",
             "pytest-xdist",
             "pytz",
-            "ruff~=0.4.0",
+            "ruff~=0.7.0",
             "snowflake-connector-python[pandas,secure-local-storage]>=3.0.2",
             "sqlalchemy-stubs",
             "types-croniter",
@@ -101,6 +101,7 @@ setup(
         ],
         "cicdtest": [
             "dbt-athena-community",
+            "dbt-clickhouse",
             "dbt-databricks",
             "dbt-redshift",
             "dbt-sqlserver>=1.7.0",
@@ -151,7 +152,7 @@ setup(
             "trino",
         ],
         "web": [
-            "fastapi==0.110.2",
+            "fastapi==0.115.5",
             "watchfiles>=0.19.0",
             "uvicorn[standard]==0.22.0",
             "sse-starlette>=0.2.2",

@@ -78,6 +78,11 @@ class BigQueryEngineAdapter(InsertOverwriteWithMergeMixin, ClusteredByMixin, Row
                 exp.DataType.build("DATETIME", dialect=DIALECT),
             },
         },
+        coerceable_types={
+            exp.DataType.build("FLOAT64", dialect=DIALECT): {
+                exp.DataType.build("BIGNUMERIC", dialect=DIALECT),
+            },
+        },
         support_coercing_compatible_types=True,
         parameterized_type_defaults={
             exp.DataType.build("DECIMAL", dialect=DIALECT).this: [(38, 9), (0,)],
@@ -716,7 +721,7 @@ class BigQueryEngineAdapter(InsertOverwriteWithMergeMixin, ClusteredByMixin, Row
         storage_format: t.Optional[str] = None,
         partitioned_by: t.Optional[t.List[exp.Expression]] = None,
         partition_interval_unit: t.Optional[IntervalUnit] = None,
-        clustered_by: t.Optional[t.List[str]] = None,
+        clustered_by: t.Optional[t.List[exp.Expression]] = None,
         table_properties: t.Optional[t.Dict[str, exp.Expression]] = None,
         columns_to_types: t.Optional[t.Dict[str, exp.DataType]] = None,
         table_description: t.Optional[str] = None,
@@ -990,6 +995,9 @@ class BigQueryEngineAdapter(InsertOverwriteWithMergeMixin, ClusteredByMixin, Row
 
     def _normalize_decimal_value(self, col: exp.Expression, precision: int) -> exp.Expression:
         return exp.func("FORMAT", exp.Literal.string(f"%.{precision}f"), col)
+
+    def _normalize_nested_value(self, col: exp.Expression) -> exp.Expression:
+        return exp.func("TO_JSON_STRING", col, dialect=self.dialect)
 
     @property
     def _query_data(self) -> t.Any:

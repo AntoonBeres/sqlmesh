@@ -169,6 +169,13 @@ class BaseContext(abc.ABC):
         raise NotImplementedError
 
     def table(self, model_name: str) -> str:
+        logger.warning(
+            "The SQLMesh context's `table` method is deprecated and will be removed "
+            "in a future release. Please use the `resolve_table` method instead."
+        )
+        return self.resolve_table(model_name)
+
+    def resolve_table(self, model_name: str) -> str:
         """Gets the physical table name for a given model.
 
         Args:
@@ -454,12 +461,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             }
         )
 
-        update_model_schemas(
-            self.dag,
-            models=self._models,
-            audits=self._audits,
-            context_path=self.path,
-        )
+        update_model_schemas(self.dag, models=self._models, context_path=self.path)
 
         if model.dialect:
             self._all_dialects.add(model.dialect)
@@ -553,12 +555,8 @@ class GenericContext(BaseContext, t.Generic[C]):
             self._macros.update(project.macros)
             self._models.update(project.models)
             self._metrics.update(project.metrics)
-
-            for name, audit in project.audits.items():
-                if isinstance(audit, StandaloneAudit):
-                    self._standalone_audits[name] = audit
-                else:
-                    self._audits[name] = audit
+            self._audits.update(project.audits)
+            self._standalone_audits.update(project.standalone_audits)
 
         self.dag = DAG({k: v for project in projects for k, v in project.dag.graph.items()})
 
@@ -599,6 +597,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         ignore_cron: bool = False,
         select_models: t.Optional[t.Collection[str]] = None,
         exit_on_env_update: t.Optional[int] = None,
+        no_auto_upstream: bool = False,
     ) -> bool:
         """Run the entire dag through the scheduler.
 
@@ -613,6 +612,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                 upstream dependencies of selected models will also be evaluated.
             exit_on_env_update: If set, exits with the provided code if the run is interrupted by an update
                 to the target environment.
+            no_auto_upstream: Whether to not force upstream models to run. Only applicable when using `select_models`.
 
         Returns:
             True if the run was successful, False otherwise.
@@ -681,6 +681,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                     ignore_cron=ignore_cron,
                     select_models=select_models,
                     circuit_breaker=_has_environment_changed,
+                    no_auto_upstream=no_auto_upstream,
                 )
                 done = True
             except CircuitBreakerError:
@@ -1719,7 +1720,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             else self.snapshots.values()
         )
 
-        num_audits = sum(len(snapshot.audits_with_args) for snapshot in snapshots)
+        num_audits = sum(len(snapshot.node.audits_with_args) for snapshot in snapshots)
         self.console.log_status_update(f"Found {num_audits} audit(s).")
         errors = []
         skipped_count = 0
@@ -1848,21 +1849,25 @@ class GenericContext(BaseContext, t.Generic[C]):
             )
 
     @python_api_analytics
-    def print_info(self, skip_connection: bool = False) -> None:
+    def print_info(self, skip_connection: bool = False, verbose: bool = False) -> None:
         """Prints information about connections, models, macros, etc. to the console."""
         self.console.log_status_update(f"Models: {len(self.models)}")
         self.console.log_status_update(f"Macros: {len(self._macros) - len(macro.get_registry())}")
 
-        print_config(self.config.get_connection(self.gateway), self.console, "Connection")
-        print_config(self.config.get_test_connection(self.gateway), self.console, "Test Connection")
-        print_config(
-            self.config.get_state_connection(self.gateway), self.console, "State Connection"
-        )
-        self.console.log_status_update("\n")
         if skip_connection:
             return
-        self._try_connection("data warehouse", self._engine_adapter.ping)
 
+        if verbose:
+            self.console.log_status_update("")
+            print_config(self.config.get_connection(self.gateway), self.console, "Connection")
+            print_config(
+                self.config.get_test_connection(self.gateway), self.console, "Test Connection"
+            )
+            print_config(
+                self.config.get_state_connection(self.gateway), self.console, "State Connection"
+            )
+
+        self._try_connection("data warehouse", self._engine_adapter.ping)
         state_connection = self.config.get_state_connection(self.gateway)
         if state_connection:
             self._try_connection("state backend", state_connection.connection_validator())
@@ -1884,6 +1889,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         ignore_cron: bool,
         select_models: t.Optional[t.Collection[str]],
         circuit_breaker: t.Optional[t.Callable[[], bool]],
+        no_auto_upstream: bool,
     ) -> bool:
         scheduler = self.scheduler(environment=environment)
         snapshots = scheduler.snapshots
@@ -1896,7 +1902,9 @@ class GenericContext(BaseContext, t.Generic[C]):
             for fqn, model in models.items():
                 dag.add(fqn, model.depends_on)
             model_selector = self._new_selector(models=models, dag=dag)
-            select_models = set(dag.subdag(*model_selector.expand_model_selections(select_models)))
+            select_models = set(model_selector.expand_model_selections(select_models))
+            if not no_auto_upstream:
+                select_models = set(dag.subdag(*select_models))
 
         return scheduler.run(
             environment,
@@ -2000,15 +2008,10 @@ class GenericContext(BaseContext, t.Generic[C]):
 
         local_nodes = {**(models_override or self._models), **self._standalone_audits}
         nodes = local_nodes.copy()
-        audits = self._audits.copy()
 
         for name, snapshot in remote_snapshots.items():
             if name not in nodes and snapshot.node.project not in projects:
                 nodes[name] = snapshot.node
-                if snapshot.is_model:
-                    for audit in snapshot.audits:
-                        if name not in audits:
-                            audits[name] = audit
 
         def _nodes_to_snapshots(nodes: t.Dict[str, Node]) -> t.Dict[str, Snapshot]:
             snapshots: t.Dict[str, Snapshot] = {}
@@ -2024,7 +2027,6 @@ class GenericContext(BaseContext, t.Generic[C]):
                 snapshot = Snapshot.from_node(
                     node,
                     nodes=nodes,
-                    audits=audits,
                     cache=fingerprint_cache,
                     ttl=ttl,
                     config=self.config_for_node(node),
@@ -2109,7 +2111,6 @@ class GenericContext(BaseContext, t.Generic[C]):
         return Selector(
             self.state_reader,
             models=models or self._models,
-            audits=self._audits,
             context_path=self.path,
             dag=dag,
             default_catalog=self.default_catalog,
