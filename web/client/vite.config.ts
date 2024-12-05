@@ -46,26 +46,7 @@ export default defineConfig({
   server:
     process.env.NODE_ENV === 'testing'
       ? {}
-      : {
-          proxy: {
-            [`${BASE_URL}/api`]: {
-              target: 'http://api:8000',
-              rewrite: path => path.replace(`${BASE_URL}/api`, '/api'),
-            },
-            [`${APP_BASE_URL}/data-catalog`]: {
-              target: 'http://app:8001',
-              rewrite: path => APP_BASE,
-            },
-            [`${APP_BASE_URL}/data`]: {
-              target: 'http://app:8001',
-              rewrite: path => APP_BASE,
-            },
-            [`${APP_BASE_URL}/lineage`]: {
-              target: 'http://app:8001',
-              rewrite: path => APP_BASE,
-            },
-          },
-        },
+      : {},
   preview: {
     port: 8005,
   },
