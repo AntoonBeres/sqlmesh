@@ -4,9 +4,6 @@ import react from '@vitejs/plugin-react-swc'
 
 const BASE_URL = process.env.BASE_URL ?? ''
 const BASE = BASE_URL == null || BASE_URL === '' ? '/' : BASE_URL
-const APP_BASE_URL = process.env.APP_BASE_URL ?? ''
-const APP_BASE = APP_BASE_URL == null || APP_BASE_URL === '' ? '/' : APP_BASE_URL
-
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -46,7 +43,26 @@ export default defineConfig({
   server:
     process.env.NODE_ENV === 'testing'
       ? {}
-      : {},
+      : {
+          proxy: {
+            [`${BASE_URL}/api`]: {
+              target: 'http://api:8000',
+              rewrite: path => path.replace(`${BASE_URL}/api`, '/api'),
+            },
+            [`${BASE_URL}/data-catalog`]: {
+              target: 'http://app:8001',
+              rewrite: path => BASE,
+            },
+            [`${BASE_URL}/data`]: {
+              target: 'http://app:8001',
+              rewrite: path => BASE,
+            },
+            [`${BASE_URL}/lineage`]: {
+              target: 'http://app:8001',
+              rewrite: path => BASE,
+            },
+          },
+        },
   preview: {
     port: 8005,
   },
