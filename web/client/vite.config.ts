@@ -3,10 +3,9 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react-swc'
 
 const BASE_URL = process.env.BASE_URL ?? ''
-const BASE = BASE_URL == null || BASE_URL === '' ? '/' : BASE_URL
-const APP_BASE_URL = process.env.APP_BASE_URL ?? ''
-const APP_BASE = APP_BASE_URL == null || APP_BASE_URL === '' ? '/' : APP_BASE_URL
-
+//const BASE = BASE_URL == null || BASE_URL === '' ? '/' : BASE_URL
+const BASE = '/proxy/8000/'
+const APP_BASE = '/proxy/8001/'
 // https://vitejs.dev/config/
 export default defineConfig({
   base: BASE,
@@ -43,25 +42,26 @@ export default defineConfig({
     exclude: ['**/node_modules/**', './tests'],
   },
   server:
-    process.env.NODE_ENV === 'testing'
+  process.env.NODE_ENV === 'testing'
       ? {}
-      : {
+      : 
+ {
           proxy: {
             [`${BASE_URL}/api`]: {
               target: 'http://api:8000',
-              rewrite: path => path.replace(`${BASE_URL}/api`, '/api'),
+              rewrite: path => BASE,
             },
-            [`${APP_BASE_URL}/data-catalog`]: {
+            [`${BASE_URL}/data-catalog`]: {
               target: 'http://app:8001',
-              rewrite: path => APP_BASE_URL,
+              rewrite: path => BASE,
             },
-            [`${APP_BASE_URL}/data`]: {
+            [`${BASE_URL}/data`]: {
               target: 'http://app:8001',
-              rewrite: path => APP_BASE_URL,
+              rewrite: path => BASE,
             },
-            [`${APP_BASE_URL}/lineage`]: {
+            [`${BASE_URL}/lineage`]: {
               target: 'http://app:8001',
-              rewrite: path => APP_BASE_URL,
+              rewrite: path => BASE,
             },
           },
         },
