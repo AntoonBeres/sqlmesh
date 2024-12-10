@@ -94,7 +94,7 @@ export function useApiModules(
 ): UseQueryWithTimeoutOptions<Modules[]> {
   return useQueryWithTimeout(
     {
-      queryKey: ['api/modules'],
+      queryKey: ['/api/modules'],
       queryFn: getApiModulesApiModulesGet,
       enabled: true,
     },
