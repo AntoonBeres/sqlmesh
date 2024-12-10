@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator:
 def create_app() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
 
-    app.include_router(api_router, prefix="/proxy/8001/api")
+    app.include_router(api_router, prefix="/api")
     WEB_DIRECTORY = pathlib.Path(__file__).parent.parent
 
     # Starlette uses mimetypes.guess_type to determine a file response's content type. Since this method
