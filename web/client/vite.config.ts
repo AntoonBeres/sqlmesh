@@ -53,15 +53,15 @@ export default defineConfig({
             },
             [`${BASE_URL}/data-catalog`]: {
               target: 'http://app:8001',
-              rewrite: path => BASE,
+              rewrite: path => APP_BASE,
             },
             [`${BASE_URL}/data`]: {
               target: 'http://app:8001',
-              rewrite: path => BASE,
+              rewrite: path => APP_BASE,
             },
             [`${BASE_URL}/lineage`]: {
               target: 'http://app:8001',
-              rewrite: path => BASE,
+              rewrite: path => APP_BASE,
             },
           },
         },
