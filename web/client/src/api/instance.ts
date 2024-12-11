@@ -42,10 +42,20 @@ export async function fetchAPI<T = any, B extends object = any>(
     config
   const hasSearchParams = Object.keys({ ...params }).length > 0
   const fullUrl = url.replace(/([^:]\/)\/+/g, '$1')
-  const input = new URL(
+
+  let input = new URL(
     `${getUrlPrefix()}${fullUrl}`.replaceAll('//', '/'),
     window.location.origin,
   )
+  if(url.includes('api/')) { 
+    const otherUrl = "/proxy/8000/"
+    input = new URL(
+      `${otherUrl}${fullUrl}`.replaceAll('//', '/'),
+      window.location.origin,
+    )
+  }
+
+  
 
   if (hasSearchParams) {
     const searchParams: Record<string, string> = Object.entries({
@@ -127,7 +137,8 @@ function toRequestBody(obj: unknown): BodyInit {
 }
 
 export function getUrlPrefix(): string {
-  return isStringEmptyOrNil(window.__BASE_URL__) ? '/' : window.__BASE_URL__
+  return '/proxy/8000/'
+ //return isStringEmptyOrNil(window.__BASE_URL__) ? '/' : window.__BASE_URL__
 }
 
 export default fetchAPI

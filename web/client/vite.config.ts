@@ -3,8 +3,9 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react-swc'
 
 const BASE_URL = process.env.BASE_URL ?? ''
-const BASE = BASE_URL == null || BASE_URL === '' ? '/' : BASE_URL
-
+//const BASE = BASE_URL == null || BASE_URL === '' ? '/' : BASE_URL
+const BASE = '/proxy/8000/'
+const APP_BASE = '/proxy/8001/'
 // https://vitejs.dev/config/
 export default defineConfig({
   base: BASE,
@@ -41,13 +42,14 @@ export default defineConfig({
     exclude: ['**/node_modules/**', './tests'],
   },
   server:
-    process.env.NODE_ENV === 'testing'
+  process.env.NODE_ENV === 'testing'
       ? {}
-      : {
+      : 
+ {
           proxy: {
             [`${BASE_URL}/api`]: {
               target: 'http://api:8000',
-              rewrite: path => path.replace(`${BASE_URL}/api`, '/api'),
+              rewrite: path => BASE,
             },
             [`${BASE_URL}/data-catalog`]: {
               target: 'http://app:8001',
